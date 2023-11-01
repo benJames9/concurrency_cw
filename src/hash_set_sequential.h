@@ -25,7 +25,7 @@ template <typename T> class HashSetSequential : public HashSetBase<T> {
 
     // Double number of buckets if resize policy is satisfied.
     if (Policy()) {
-      table_.resize(table_.size() * 2);
+      Resize();
     }
     return true;
   }
@@ -60,6 +60,24 @@ template <typename T> class HashSetSequential : public HashSetBase<T> {
   // Returns true if average bucket size exceeds bucket_capacity_
   bool Policy() {
     return set_size_ / table_.size() > bucket_capacity_;
+  }
+
+  // Perform a resizing, re-hashing all elements
+  void Resize() { 
+    size_t new_size = table_.size() * 2;
+    std::vector<std::vector<T>> new_table(new_size);
+
+    // Copy elems to new table
+    for (auto bucket : table_) {
+        for (T elem : bucket) {
+            size_t new_bucket_index = std::hash<T>()(elem) % new_table.size();
+            new_table[new_bucket_index].push_back(elem);
+        }
+    } 
+
+    // Explicitly clear old table 
+    table_.clear();
+    table_ = new_table;
   }
 };
 
