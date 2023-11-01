@@ -37,7 +37,7 @@ template <typename T> class HashSetSequential : public HashSetBase<T> {
     
     // Remove element from correct bucket (based on hash value)
     size_t bucket_index = std::hash<T>()(elem) % table_.size();
-    std::vector<T> bucket = table_[bucket_index];
+    std::vector<T>& bucket = table_[bucket_index];
     bucket.erase(std::remove(bucket.begin(), bucket.end(), elem), bucket.end());
     set_size_--;
     return true;
@@ -46,7 +46,7 @@ template <typename T> class HashSetSequential : public HashSetBase<T> {
   // Looks up element in correct bucket (based on hash value)
   [[nodiscard]] bool Contains(T elem) final {
     size_t bucket_index = std::hash<T>()(elem) % table_.size();
-    std::vector<T> bucket = table_[bucket_index];
+    std::vector<T>& bucket = table_[bucket_index];
     return std::find(bucket.begin(), bucket.end(), elem) != bucket.end();
   }
 
