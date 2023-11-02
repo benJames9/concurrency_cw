@@ -16,11 +16,11 @@ class HashSetCoarseGrained : public HashSetBase<T> {
         : set_size_(0), table_(initial_capacity) {}
 
   bool Add(T elem) final {
+    std::scoped_lock<std::mutex> lock(mutex_);
 
-    if (Contains(elem)) {
+    if (Contains_(elem)) {
       return false;
     }
-    std::scoped_lock<std::mutex> lock(mutex_);
 
     // Add element to correct bucket from hash value
     size_t bucket_index = std::hash<T>()(elem) % table_.size();
@@ -36,16 +36,16 @@ class HashSetCoarseGrained : public HashSetBase<T> {
   }
 
   bool Remove(T elem) final {
+    std::scoped_lock<std::mutex> lock(mutex_);
 
-    if (!Contains(elem)) {
+    if (!Contains_(elem)) {
       return false;
     }
-    std::scoped_lock<std::mutex> lock(mutex_);
     
     // Remove element from correct bucket (based on hash value)
     size_t bucket_index = std::hash<T>()(elem) % table_.size();
     std::vector<T>& bucket = table_[bucket_index];
-    table_[bucket_index].erase(std::remove(bucket.begin(), bucket.end(), elem), bucket.end());
+    bucket.erase(std::remove(bucket.begin(), bucket.end(), elem), bucket.end());
     // Decrements size atomically
     set_size_.fetch_sub(1);
     
@@ -55,13 +55,10 @@ class HashSetCoarseGrained : public HashSetBase<T> {
   // Looks up element in correct bucket (based on hash value)
   [[nodiscard]] bool Contains(T elem) final {
     std::scoped_lock<std::mutex> lock(mutex_);
-    size_t bucket_index = std::hash<T>()(elem) % table_.size();
-    std::vector<T>& bucket = table_[bucket_index];
-    return std::find(bucket.begin(), bucket.end(), elem) != bucket.end();
+    return Contains_(elem);
   }
 
   [[nodiscard]] size_t Size() const final {
-    // std::cout << "getting size... ";
     return set_size_.load();
   }
 
@@ -71,8 +68,6 @@ class HashSetCoarseGrained : public HashSetBase<T> {
   std::vector<std::vector<T>> table_;
   std::mutex mutex_; 
  
-
-
   // Returns true if average bucket size exceeds bucket_capacity_
   bool Policy() {
     return set_size_ / table_.size() > bucket_capacity_;
@@ -94,6 +89,12 @@ class HashSetCoarseGrained : public HashSetBase<T> {
     // Explicitly clear old table 
     table_.clear();
     table_ = new_table;
+  }
+
+  bool Contains_(T elem) {
+    size_t bucket_index = std::hash<T>()(elem) % table_.size();
+    std::vector<T>& bucket = table_[bucket_index];
+    return std::find(bucket.begin(), bucket.end(), elem) != bucket.end();
   }
 };
 
