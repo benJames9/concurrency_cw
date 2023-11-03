@@ -12,14 +12,13 @@
 template <typename T>
 class HashSetStriped : public HashSetBase<T> {
  public:
-  explicit HashSetStriped(size_t initial_capacity)
-        : set_size_(0), capacity_(initial_capacity), table_(initial_capacity), mutexes_(initial_capacity) {}
+  explicit HashSetStriped(size_t initial_capacity) : set_size_(0), 
+    capacity_(initial_capacity), table_(initial_capacity), mutexes_(initial_capacity) {}
 
   bool Add(T elem) final {
-    Acquire(elem);
+    std::unique_lock<std::mutex> lock = Acquire(elem);
 
     if (Contains_(elem)) {
-      Release(elem);
       return false;
     }
 
@@ -28,22 +27,20 @@ class HashSetStriped : public HashSetBase<T> {
     table_[bucket_index].push_back(elem);
     set_size_.fetch_add(1);
 
-    // Double number of buckets if resize policy is satisfied.
+    /* Double number of buckets if resize policy is satisfied.
+       Unlock so resize() can obtain all locks. */
     if (Policy()) {
-	    Release(elem);
+      lock.unlock();
       Resize();
-    } else {
-	    Release(elem);
-		}
+    }
 
     return true;
   }
 
   bool Remove(T elem) final {
-    Acquire(elem);
+    std::unique_lock<std::mutex> lock = Acquire(elem);
 
     if (!Contains_(elem)) {
-    	Release(elem);
       return false;
     }
     
@@ -51,18 +48,16 @@ class HashSetStriped : public HashSetBase<T> {
     size_t bucket_index = std::hash<T>()(elem) % capacity_.load();
     std::vector<T>& bucket = table_[bucket_index];
     bucket.erase(std::remove(bucket.begin(), bucket.end(), elem), bucket.end());
+
     // Decrements size atomically
     set_size_.fetch_sub(1);
-		Release(elem);
-    
     return true;
   }
 
   // Looks up element in correct bucket (based on hash value)
   [[nodiscard]] bool Contains(T elem) final {
-		Acquire(elem);
+		std::unique_lock<std::mutex> lock = Acquire(elem);
 		bool result = Contains_(elem);
-		Release(elem);
 		return result;
   }
 
@@ -86,11 +81,10 @@ class HashSetStriped : public HashSetBase<T> {
   // Perform a resizing, re-hashing all elements
   void Resize() { 
 		size_t old_size = capacity_.load();
-		AcquireAll();
+		std::vector<std::unique_lock<std::mutex>> locks = AcquireAll();
 
 		// Return if thread has already updated the capacity 
 		if (old_size != capacity_.load()) {
-			ReleaseAll();
 			return;
 		}
 
@@ -109,33 +103,32 @@ class HashSetStriped : public HashSetBase<T> {
     // Explicitly clear old table 
     table_.clear();
     table_ = new_table;
-    ReleaseAll();
   }
 
+  // Private contains - Always lock before calling
   bool Contains_(T elem) {
     size_t bucket_index = std::hash<T>()(elem) % capacity_.load();
     std::vector<T>& bucket = table_[bucket_index];
     return std::find(bucket.begin(), bucket.end(), elem) != bucket.end();
   }
 
-  void Acquire(T x) {
-    mutexes_[std::hash<T>()(x) % mutexes_.size()].lock();
+  // Lock with RAII
+  std::unique_lock<std::mutex> Acquire(T x) {
+    std::unique_lock<std::mutex> lock(mutexes_[std::hash<T>()(x) % mutexes_.size()]);
+
+    // Transfer ownership to caller
+    return lock;
   }
 
-  void Release(T x) {
-    mutexes_[std::hash<T>()(x) % mutexes_.size()].unlock();
-  }
-
-  void AcquireAll() {
-    for (size_t i = 0; i < mutexes_.size(); i++) {
-      mutexes_[i].lock();
+  // Lock all mutexes consecutively with RAII
+  std::vector<std::unique_lock<std::mutex>> AcquireAll() {
+    std::vector<std::unique_lock<std::mutex>> locks;    
+    for (auto& mutex : mutexes_) {
+      locks.push_back(std::unique_lock<std::mutex>(mutex));
     }
-  }
 
-  void ReleaseAll() {
-    for (size_t i = 1; i <= mutexes_.size(); i++) {
-      mutexes_[mutexes_.size() - i].unlock();
-    }
+    // Ownership transferred to caller
+    return locks; 
   }
 };
 
